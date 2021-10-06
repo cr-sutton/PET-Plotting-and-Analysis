@@ -166,7 +166,7 @@ for ax in axs.flat:
 
 cax = plt.axes([0.9, 0.1, 0.02, 0.8])
 plt.colorbar(im, cax=cax, label = 'Radiotracer Concentration')
-
+plt.show()
 
 # 3d plot (kinda sucks)
 # quantile_frac_map[np.isnan(quantile_frac_map)]=0
@@ -178,7 +178,7 @@ def diffusion_integration_fun_v2(btcArrayShort, dx, t_short, Df_Sim, C0_Sim):
     xsim = np.linspace(0,dx, num=29) # x in meters
     #xsim = x_coord
     M1d_sim = np.zeros(len(t_short))
-    for i in range(0, len(t_short)):
+    for i in range(0, len(t_short)-1):
         Csim = C0_Sim*(erfc((xsim)/(2*np.sqrt(Df_Sim*t_short[i]))))
         M1d_sim[i] = trapz(Csim, xsim)
     
@@ -186,44 +186,70 @@ def diffusion_integration_fun_v2(btcArrayShort, dx, t_short, Df_Sim, C0_Sim):
 
 #iterative process to fit arrival time, df, and c0 to the PET break through curves
 def fit_btc(btcArray, dx,  t_PETSim, Df_Sim, C0_Sim):
+    rmse_sim = np.ones([len(Df_Sim), len(C0_Sim), len(t_arrival)])
     for jsim in range(0, len(Df_Sim)):
         for ksim in range(0, len(C0_Sim)):
-            for lsim in range(0, len(t_arrival)-1):
+            for lsim in range(0, len(t_arrival)):
                 t_short = t_PETSim - t_arrival[lsim]
                 btcArrayShort = btcArray[t_short>0]
                 t_short = t_short[t_short>0]
                 M1d_sim = diffusion_integration_fun_v2(btcArrayShort, dx/2, t_short, Df_Sim[jsim], C0_Sim[ksim])
                 M1dvox = M1d_sim*2
-                MSE = np.square(np.subtract(btcArrayShort,M1dvox)).mean()
-                RMSE = np.sqrt(MSE)
+                MSE = (btcArrayShort-M1dvox)**2
+                RMSE = np.mean(MSE)
+                #print(RMSE)
                 rmse_sim[jsim,ksim,lsim] = RMSE
                             
                 #find the index of the minimum RMSE
                 indices =  np.argpartition(rmse_sim.flatten(), 0)[0]
                 ind = np.unravel_index(indices, rmse_sim.shape)
-                Df_Soln[r, c, s] = Df_Sim[ind[0]]
-                C0_Soln[r, c, s] = C0_Sim[ind[1]]
-                tArriv_Soln[r, c, s] = t_arrival[ind[2]]
+                # Df_Soln[r, c, s] = Df_Sim[ind[0]]
+                # C0_Soln[r, c, s] = C0_Sim[ind[1]]
+                # tArriv_Soln[r, c, s] = t_arrival[ind[2]]
+                
+    return Df_Sim[ind[0]], C0_Sim[ind[1]], t_arrival[ind[2]], rmse_sim
 
+from datetime import datetime
+start_time = datetime.now()
 
 t_PETSim = time_array # t in seconds
-C0_Sim=np.linspace(1E-4*0.1, 1, num=31)
-Df_Sim = np.linspace(1E-1*0.1, 1E-7*0.1, num=32) # in cm^2/s
-t_arrival = np.linspace(1000, 8000, num=50) # in cm^2/s
-rmse_sim = np.zeros([len(Df_Sim), len(C0_Sim), len(t_PETSim)])
-Df_Soln = np.zeros([nrow, ncol, nslice])
-C0_Soln = np.zeros([nrow, ncol, nslice])
-tArriv_Soln = np.zeros([nrow, ncol, nslice])
+C0_Sim=np.linspace(1, 20, num=65)
+Df_Sim = np.logspace(-4, -8, num=100) # in cm^2/s
+t_arrival = np.linspace(10, 1000, num=30) # in cm^2/s
+Df_Soln = np.zeros([nrow-1, ncol-1, nslice-1])
+C0_Soln = np.zeros([nrow-1, ncol-1, nslice-1])
+tArriv_Soln = np.zeros([nrow-1, ncol-1, nslice-1])
 
-for r in range(0,nrow):
+for r in range(0,5):
     for c in range(0,ncol):
-        for s in range(20, 21):
+        for s in range(0, 1):
             # if fracture is present, plot btc
             if binary_frac_matrix[r,c,s]==1:     
                 btcArray = PET_data[r, c, s, :]
-                fit_btc(btcArray, dx/2, t_PETSim, Df_Sim, C0_Sim)
-  
-plot_2d(Df_Soln[:,:,0], dx, dy, 'df sim slice', 'viridis')
-plot_2d(C0_Soln[:,:,0], dx, dy, 'C0 sim slice', 'viridis')
-plot_2d(tArriv_Soln[:,:,0], dx, dy, 'Arrival time sim slice', 'viridis')
+                dfit, cfit, tfit, rmse_sim = fit_btc(btcArray, dx/2, t_PETSim, Df_Sim, C0_Sim)
+                Df_Soln[r, c, s] = dfit
+                C0_Soln[r, c, s] = cfit
+                tArriv_Soln[r, c, s] = tfit
+                plt.plot(t_PETSim, btcArray, linewidth=1, alpha = 1)
+                M1d_sim = diffusion_integration_fun_v2(btcArray, dx/2, t_PETSim, dfit, cfit)
+                plt.plot(t_PETSim+tfit, M1d_sim*2, linewidth=1, alpha = 1)
+                
+                
+              
+plt.xlabel('Time [sec]')
+plt.ylabel('Concentration')
+plt.title('breakthrough curves of fracture voxels')
 
+
+plot_2d(rmse_sim[:,:,0], 1, 1, 'rmse', 'viridis')
+  
+plot_2d(Df_Soln[:,:,20], dx, dy, 'df sim slice', 'viridis')
+plot_2d(C0_Soln[:,:,20], dx, dy, 'C0 sim slice', 'viridis')
+plot_2d(tArriv_Soln[:,:,20], dx, dy, 'Arrival time sim slice', 'viridis')
+
+end_time = datetime.now()
+print('Duration: {}'.format(end_time - start_time))
+
+plt.plot(t_PETSim, btcArray, linewidth=1, alpha = 1)
+M1d_sim = diffusion_integration_fun_v2(btcArray, dx/2, t_PETSim, 0.0000001, 8)
+plt.plot(t_PETSim+500, M1d_sim*2, linewidth=1, alpha = 1)
